@@ -13,3 +13,13 @@ jobs:
         run: |
           echo "PR title does not contain 'PSRE-'. Please include 'PSRE-' in the title."
           exit 1
+
+  block_merge:
+    runs-on: ubuntu-latest
+    needs: [validate_PR_title]
+    steps:
+      - name: Block merge if PR title is invalid
+        if: failure()
+        run: |
+          echo "::error::PR title does not contain 'PSRE-'. Please include 'PSRE-' in the title."
+          exit 1
