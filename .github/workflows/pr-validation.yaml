@@ -1,0 +1,15 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate_PR_title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        if: "!contains(github.event.pull_request.title, 'PSRE-')"
+        run: |
+          echo "PR title does not contain 'PSRE-'. Please include 'PSRE-' in the title."
+          exit 1
