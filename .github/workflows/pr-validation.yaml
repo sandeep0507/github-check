@@ -10,13 +10,14 @@ jobs:
     steps:
       - name: Validate PR title
         id: validate_title
+        shell: /usr/bin/bash -e {0}
         run: |
           # Check if the PR title contains one of the specified JIRA keys followed by a number
-          if ! echo "${{ github.event.pull_request.title }}" | grep -qEi '^(PSREVCD|PSREVE|PSREDS|PSREADSYS|PSRE)-[0-9]+'; then
+          if echo "${{ github.event.pull_request.title }}" | grep -qEi '^(PSREVCD|PSREVE|PSREDS|PSREADSYS|PSRE)-[0-9]+'; then
+            echo "::set-output name=valid::true"
+          else
             echo "PR title does not contain a valid JIRA key (PSREVCD, PSREVE, PSREDS, PSREADSYS, PSRE) followed by a number."
             echo "::set-output name=valid::false"
-          else
-            echo "::set-output name=valid::true"
 
   warn_invalid_title:
     runs-on: ubuntu-latest
