@@ -1,0 +1,157 @@
+name: Terraform Multi-Region Deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  TF_VERSION: 1.4.5
+  AWS_REGIONS: |
+    {
+      "dev": ["us-east-2", "us-west-2"],
+      "stage": ["eu-west-1", "eu-central-1"],
+      "prod": ["eu-west-1", "eu-central-1"]
+    }
+
+jobs:
+  linting:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v3
+        with:
+          tflint_version: latest
+        run: tflint --init && tflint
+
+  plan:
+    needs: linting
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, stage, prod]
+        region: ${{ fromJSON(env.AWS_REGIONS)[matrix.env] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets[format('AWS_{0}_ACCESS_KEY_ID', upper(matrix.env))] }}
+          aws-secret-access-key: ${{ secrets[format('AWS_{0}_SECRET_ACCESS_KEY', upper(matrix.env))] }}
+          aws-region: ${{ matrix.region }}
+
+      - name: Terraform Init & Plan
+        run: |
+          cd phases/${{ matrix.env }}-${{ matrix.region | split('-') | slice(0, 2) | join('-') }}
+          terraform init
+          terraform plan -out=tfplan
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.env }}-${{ matrix.region }}
+          path: phases/${{ matrix.env }}-${{ matrix.region | split('-') | slice(0, 2) | join('-') }}/tfplan
+
+  deploy-dev:
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: ${{ fromJSON(env.AWS_REGIONS).dev }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-dev-${{ matrix.region }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_DEV_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_DEV_SECRET_ACCESS_KEY }}
+          aws-region: ${{ matrix.region }}
+
+      - name: Terraform Apply
+        run: |
+          cd phases/dev-${{ matrix.region | split('-') | slice(0, 2) | join('-') }}
+          terraform apply -auto-approve tfplan
+
+  deploy-stage:
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: ${{ fromJSON(env.AWS_REGIONS).stage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-stage-${{ matrix.region }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_STAGE_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_STAGE_SECRET_ACCESS_KEY }}
+          aws-region: ${{ matrix.region }}
+
+      - name: Terraform Apply
+        run: |
+          cd phases/stage-${{ matrix.region | split('-') | slice(0, 2) | join('-') }}
+          terraform apply -auto-approve tfplan
+
+  deploy-prod:
+    needs: deploy-stage
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: ${{ fromJSON(env.AWS_REGIONS).prod }}
+    steps:
+      - name: Manual Approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ secrets.GITHUB_TOKEN }}
+          approvers: team-prod-admins
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-prod-${{ matrix.region }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_PROD_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_PROD_SECRET_ACCESS_KEY }}
+          aws-region: ${{ matrix.region }}
+
+      - name: Terraform Apply
+        run: |
+          cd phases/prod-${{ matrix.region | split('-') | slice(0, 2) | join('-') }}
+          terraform apply -auto-approve tfplan
